@@ -1,6 +1,6 @@
 """
 Q4 - Dining Philosophers (4) with a monitor
-(Python version of the Java DiningPhilosophersMonitor program)
+
 
 Idea (Dijkstra): instead of taking forks one at a time, a philosopher asks the
 monitor for both forks together. The monitor says yes only if neither
