@@ -19,11 +19,11 @@ browser to check the generated pages.
 4. A final audit of the monitor version, with the instruction not to change anything
    unless a real problem was found. Nothing had to change.
    Implement both Dining Philosophers programs directly in Python:
-5.Dining Philosophers using Semaphores: Use 4 philosophers, 4 chopsticks, and a room semaphore with room = N - 1 to prevent deadlock.
-Dining Philosophers using Monitors: Use Python's threading.Condition and a Dijkstra-style monitor to control philosopher states and chopstick access.
-Write both implementations from scratch in Python. Do not use Java source code, Java repositories, Java-to-Python porting, or Java dependencies. Use Python's standard library and keep both implementations consistent with the style and structure of my existing Python assignments.
-6.Rewrite the file headers, documentation, and code comments in simple, natural, beginner-friendly English, as if I wrote them myself. Explain the   synchronization logic clearly without changing the correctness of the algorithms. Keep the comments useful for understanding the code and explaining it during my Operating Systems viva.
-
+5. Dining Philosophers using Semaphores: Use 4 philosophers, 4 chopsticks, and a room semaphore with room = N - 1 to prevent deadlock.
+   Dining Philosophers using Monitors: Use Python's threading.Condition and a Dijkstra-style monitor to control philosopher states and chopstick access.
+   Write both implementations from scratch in Python. Do not use Java source code, Java repositories, Java-to-Python porting, or Java dependencies. Use         Python's standard library and keep both implementations consistent with the style and structure of my existing Python assignments.
+6. Rewrite the file headers, documentation, and code comments in simple, natural, beginner-friendly English, as if I wrote them myself. Explain the             synchronization logic clearly without changing the correctness of the algorithms. Keep the comments useful for understanding the code and explaining it      during my Operating Systems viva.
+   
 ## Manual changes / decisions that were mine
 
 - Keep every question as exactly two files (program + generated HTML), no shared module.
