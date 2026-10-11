@@ -132,23 +132,23 @@ No program claims absolute starvation freedom. Each run counts meals per philoso
 
 ## Results
 
-Concurrency results change from run to run, because the interleaving changes. Each number below states its source. Event counts and checks for the supplied replays come from the event data in the replay file. Audit runs A1 to A3 were three fresh runs of each program, made from the same source code.
+Concurrency results change from run to run, because the interleaving changes. Each number below states its source. Event counts and checks for the supplied replays come from the event data in the replay file, which was inspected directly for this revision (not taken on trust from an earlier description). Audit runs A1 to A3 were three fresh runs of each program, made from the same source code.
 
-**Q1 Readers-Writers (semaphore).** The replay committed in `generated_html/readers_writers_semaphore.html` (the run behind the screenshot) is recorded as: 96 events, final value 6 (expected 6), maximum **5** readers reading at once, 12 "released resource" events, all rules held. A separate copy of this replay that was checked directly for this README showed a maximum of 4 readers instead of 5, with the same event count and final value; this may be a different run of the same program rather than the same file, and is noted here for transparency. Three fresh runs of the program gave maxima of 4, 5 and 5 readers, which shows the number is not fixed from run to run.
+**Q1 Readers-Writers (semaphore).** The replay committed in `generated_html/readers_writers_semaphore.html` (the file behind the screenshot) was opened and its embedded event log checked directly: 96 events, final value 6 (expected 6), **maximum 4 readers reading at once**, 12 "released resource" events, all rules held, no checks panel in the page (Q1's verdict appears only in the header: "all checks passed - no read/write overlap, no lost update"). This is one committed file, not two different runs — an earlier draft of this README stated 5 for the committed replay and 4 only for "a separate copy"; that was incorrect. The committed file and the screenshot are the same run and both show 4. Three fresh runs of the program gave maxima of 4, 5 and 5 readers, which shows the number is not fixed from run to run and 4 is a property of this specific recorded run, not a guarantee.
 
-**Q2 Readers-Writers (monitor).** The replay committed in `generated_html/readers_writers_monitor.html` is recorded as 84 events, all 8 checks pass, maximum 5 readers at once. There are 15 reader requests in total (5 readers, 3 rounds each). How many were "held back" depends on which requests are counted:
+**Q2 Readers-Writers (monitor).** The replay committed in `generated_html/readers_writers_monitor.html` is recorded as 84 events, all 8 checks pass, maximum 5 readers at once, final value 6 (expected 6). There are 15 reader requests in total (5 readers, 3 rounds each). How many were "held back" depends on which requests are counted:
 
 | Run | Held back for a queued writer only (`waiting_writers > 0` at arrival) | Held back because a writer was active or queued (broader count) |
 |-----|------|------|
-| Repository's committed replay | 9 | **5** |
+| Repository's committed replay (recomputed directly from the embedded event log) | 9 | **13** |
 | A second fresh run | 9 | 10 |
 | A third fresh run | 3 | 8 |
 
-The repository's README states **5**, which matches the broader count. The narrower count (only counting requests that arrived while a writer was specifically queued, not yet admitted) gives 9 for the same committed replay. Both are shown because the method was not stated in earlier drafts of this README; pick whichever definition your lecturer expects and keep it consistent with the number you quote.
+The narrower count (only requests that arrived while a writer was specifically queued, not yet admitted) gives 9 for the committed replay. The broader count (a writer either active or queued) gives 13. Because the broader condition includes the narrower one, the broad count can never be smaller than the narrow count for the same run; an earlier draft of this README stated 5 for the committed replay's broad count, which is below the narrow count of 9 and is therefore not a value this file can produce. That figure was an error and has been removed. 13 is the value computed directly from the committed replay's own event data and is the one to quote.
 
-**Q3 Dining Philosophers (semaphore).** Supplied replay: 112 events, all 7 checks pass, never more than 3 philosophers in the room, every philosopher ate 3 times. Audit runs: 112 events each, all checks pass, and at most one philosopher eating at a time in every run. In these runs, two philosophers never ate at the same moment.
+**Q3 Dining Philosophers (semaphore).** Supplied replay: 112 events, all 7 checks pass, never more than 3 philosophers in the room, every philosopher ate 3 times, and in this run no two philosophers ever ate at the same moment (max eating at once = 1). Audit runs: 112 events each, all checks pass, and at most one philosopher eating at a time in every run.
 
-**Q4 Dining Philosophers (monitor).** Supplied replay: 52 events, all 6 checks pass, every philosopher ate 3 times, and two non-neighbouring philosophers ate at the same time. Audit runs: 52 events each, all checks pass, and two philosophers eating at once in every run.
+**Q4 Dining Philosophers (monitor).** Supplied replay: 52 events, all 6 checks pass, every philosopher ate 3 times, and two non-neighbouring philosophers ate at the same time (max eating at once = 2). Audit runs: 52 events each, all checks pass, and two philosophers eating at once in every run.
 
 Screenshots of the four supplied replays are in `screenshots/`. Each screenshot is a snapshot at a stated event number in the matching replay.
 
@@ -156,7 +156,7 @@ Screenshots of the four supplied replays are in `screenshots/`. Each screenshot 
 
 | Program | Thread join | If a deadlock occurs |
 |---------|-------------|----------------------|
-| Q1 Readers-Writers (semaphore) | `join()` with no timeout (confirmed from the source code; some notes about this run mention a 60 s limit, but the code has none) | The program does not finish; it waits forever |
+| Q1 Readers-Writers (semaphore) | `join()` with no timeout (confirmed from the source code) | The program does not finish; it waits forever |
 | Q2 Readers-Writers (monitor) | 60 s limit (`JOIN_TIMEOUT`) | Check 7 fails and the result is reported |
 | Q3 Dining Philosophers (semaphore) | 60 s limit (`JOIN_TIMEOUT`) | The no-deadlock check fails and the result is reported |
 | Q4 Dining Philosophers (monitor) | 60 s limit (`JOIN_TIMEOUT`) | The no-deadlock check fails and the result is reported |
@@ -176,4 +176,6 @@ This is the only Q1 difference from the other three. Q1 is written to wait for e
 
 ## AI use and references
 
-AI assistance was used for this assignment. The prompt log is in `ai_prompts/`, and the references are in `references/`.
+AI assistance was used for this assignment: GitHub Copilot Chat, using a Claude model, in VS Code. The full prompt log is in [`ai_prompts/prompts.md`](ai_prompts/prompts.md), and the references are in [`references/references.md`](references/references.md).
+
+This README was audited against the actual event data embedded in the four committed `simulation.html` replay files, against the four source files, and against the repository itself; the Q1 and Q2 result figures above were corrected as a result (see Results). `ai_prompts/prompts.md` and `references/references.md` were also read for this audit and found to be an accurate, non-fabricated account of the AI assistance used and the sources cited; they were not rewritten.
