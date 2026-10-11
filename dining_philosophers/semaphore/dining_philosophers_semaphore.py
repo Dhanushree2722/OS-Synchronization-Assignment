@@ -1,6 +1,6 @@
 """
 Q3 - Dining Philosophers (4) with semaphores
-(Python version of the Java DiningPhilosophersSemaphore program)
+
 
 4 philosophers around a table, one fork between each pair, so 4 forks.
 To eat you need both your left and right fork.
