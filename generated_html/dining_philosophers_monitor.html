@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Dining Philosophers (4) - Monitor Solution - execution replay</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+  header { background: #3b2d55; color: #fff; padding: 14px 22px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header .sub { font-size: 13px; opacity: .9; }
+  .ok { color: #7CFC9A; font-weight: bold; } .bad { color: #ff8a80; font-weight: bold; }
+  main { padding: 16px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .wide { grid-column: 1 / -1; }
+  .card { background: #fff; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: #3b2d55; }
+  .controls button, .controls select { font-size: 14px; padding: 6px 12px; margin-right: 6px; }
+  .procs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .proc { width: 150px; border-radius: 6px; padding: 8px; border: 2px solid #ccc; background: #eee; text-align: center; }
+  .proc b { display: block; font-size: 16px; }
+  .proc small { display: block; font-size: 11px; min-height: 28px; color: #444; }
+  .THINKING { background: #ececec; border-color: #ccc; }
+  .HUNGRY { background: #fff3cd; border-color: #e0b400; }
+  .ACQUIRING { background: #ffe5cc; border-color: #fd7e14; }
+  .EATING { background: #d4edda; border-color: #28a745; }
+  .RELEASING { background: #cfe2ff; border-color: #0d6efd; }
+  .forks { display: flex; gap: 8px; }
+  .forkbox { flex: 1; border-radius: 6px; padding: 8px; text-align: center; border: 2px solid #bbb; background: #f8f8f8; }
+  .forkbox.held { background: #f8d7da; border-color: #dc3545; }
+  .legend span { display: inline-block; padding: 2px 8px; margin-right: 6px; border-radius: 4px; font-size: 12px; border: 1px solid #aaa; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 3px 6px; border-bottom: 1px solid #e3e3e3; text-align: left; }
+  th { background: #eef2f7; position: sticky; top: 0; }
+  tr.cur { background: #fff3cd; font-weight: bold; }
+  tr.done { color: #666; }
+  #log { max-height: 320px; overflow: auto; }
+  .gantt { position: relative; }
+  .grow { display: flex; align-items: center; height: 22px; margin: 3px 0; }
+  .grow .lbl { width: 34px; font-weight: bold; font-size: 13px; }
+  .gtrack { position: relative; flex: 1; height: 18px; background: #f0f0f0; border-radius: 3px; }
+  .seg { position: absolute; top: 0; height: 100%; border-radius: 3px; opacity: .9; }
+  .seg.HUNGRY { background: #e0b400; } .seg.ACQUIRING { background: #fd7e14; } .seg.EATING { background: #28a745; }
+  .seg.RELEASING { background: #0d6efd; } .seg.F { background: #dc3545; }
+  #cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #000; left: 34px; }
+  .axis { margin-left: 34px; font-size: 11px; color: #666; display: flex; justify-content: space-between; }
+  ul.checks { margin: 0; padding-left: 18px; font-size: 13px; }
+  #alert { color: #dc3545; font-weight: bold; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Dining Philosophers (4) - Monitor Solution (replay of a real run)</h1>
+  <div class="sub">Monitor = one lock + a condition variable per philosopher; both forks granted atomically (no hold-and-wait -> no deadlock)<br>4 philosophers, 3 meals each | 52 events recorded | meals: P0=3, P1=3, P2=3, P3=3 | <span class="ok">all checks passed - no deadlock</span></div>
+</header>
+<main>
+  <div class="card wide controls">
+    <button id="play">Play</button>
+    <button id="step">Step</button>
+    <button id="reset">Reset</button>
+    speed <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
+    &nbsp; clock: <b id="clock">0 ms</b> &nbsp; event <b id="count">0</b> / 52 &nbsp; <span id="alert"></span>
+    <span class="legend" style="float:right">
+      <span class="THINKING">thinking</span><span class="HUNGRY">hungry</span><span class="EATING">eating</span><span class="RELEASING">releasing</span>
+    </span>
+  </div>
+
+  <div class="card wide"><h2>Philosophers</h2><div class="procs" id="phils"></div></div>
+  <div class="card"><h2>Forks (shared resources)</h2><div class="forks" id="forks"></div></div>
+  <div class="card"><h2>Table state</h2><div id="table"></div></div>
+
+  <div class="card wide"><h2>Timeline (P rows: philosopher state; F rows: red = fork in use)</h2>
+    <div class="gantt" id="gantt"></div><div class="axis"><span>0 ms</span><span id="tmax"></span></div></div>
+
+  <div class="card wide"><h2>Event log recorded by the program</h2><div id="log"></div></div>
+  <div class="card wide"><h2>Checks run by the program</h2><ul class="checks"><li>PASS - 1. no deadlock: every philosopher thread finished <i>4.27 s, limit 60.0 s</i></li><li>PASS - 2. no starvation in this run: everyone ate MEALS times <i>meals P0=3, P1=3, P2=3, P3=3</i></li><li>PASS - 3. a fork was never granted while still held <i></i></li><li>PASS - 4. neighbours never ate at the same time / nobody ate without both forks <i></i></li><li>PASS - 5. (info) max philosophers eating at the same time <i>max eating at once = 2 (2 = two non-neighbours overlapped)</i></li><li>PASS - 6. monitor back in a consistent final state (all thinking, all forks free) <i>state=['THINKING', 'THINKING', 'THINKING', 'THINKING'] forks=[-1, -1, -1, -1]</i></li></ul></div>
+</main>
+<script>
+const EVENTS = [{"t": 1, "who": 0, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "sits down and starts thinking"}, {"t": 1, "who": 1, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "sits down and starts thinking"}, {"t": 1, "who": 2, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "sits down and starts thinking"}, {"t": 1, "who": 3, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "sits down and starts thinking"}, {"t": 253, "who": 3, "kind": "state", "state": "HUNGRY", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 253, "who": 3, "kind": "state", "state": "EATING", "forks": [3, -1, -1, 3], "eating": 1, "in_room": 0, "note": "monitor grants both forks F3 and F0 at once"}, {"t": 486, "who": 1, "kind": "state", "state": "HUNGRY", "forks": [3, -1, -1, 3], "eating": 1, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 486, "who": 1, "kind": "state", "state": "EATING", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "monitor grants both forks F1 and F2 at once"}, {"t": 603, "who": 2, "kind": "state", "state": "HUNGRY", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 670, "who": 0, "kind": "state", "state": "HUNGRY", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 891, "who": 3, "kind": "state", "state": "RELEASING", "forks": [3, 1, 1, 3], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 891, "who": 3, "kind": "state", "state": "THINKING", "forks": [-1, 1, 1, -1], "eating": 1, "in_room": 0, "note": "released forks F3 and F0, back to thinking"}, {"t": 917, "who": 1, "kind": "state", "state": "RELEASING", "forks": [-1, 1, 1, -1], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 917, "who": 1, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F1 and F2, back to thinking"}, {"t": 917, "who": 0, "kind": "state", "state": "EATING", "forks": [0, 0, -1, -1], "eating": 1, "in_room": 0, "note": "monitor grants both forks F0 and F1 at once"}, {"t": 917, "who": 2, "kind": "state", "state": "EATING", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "monitor grants both forks F2 and F3 at once"}, {"t": 1235, "who": 1, "kind": "state", "state": "HUNGRY", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 1314, "who": 3, "kind": "state", "state": "HUNGRY", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 1405, "who": 2, "kind": "state", "state": "RELEASING", "forks": [0, 0, 2, 2], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 1405, "who": 2, "kind": "state", "state": "THINKING", "forks": [0, 0, -1, -1], "eating": 1, "in_room": 0, "note": "released forks F2 and F3, back to thinking"}, {"t": 1417, "who": 0, "kind": "state", "state": "RELEASING", "forks": [0, 0, -1, -1], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 1417, "who": 0, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F0 and F1, back to thinking"}, {"t": 1417, "who": 3, "kind": "state", "state": "EATING", "forks": [3, -1, -1, 3], "eating": 1, "in_room": 0, "note": "monitor grants both forks F3 and F0 at once"}, {"t": 1417, "who": 1, "kind": "state", "state": "EATING", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "monitor grants both forks F1 and F2 at once"}, {"t": 1650, "who": 0, "kind": "state", "state": "HUNGRY", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 1881, "who": 3, "kind": "state", "state": "RELEASING", "forks": [3, 1, 1, 3], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 1881, "who": 3, "kind": "state", "state": "THINKING", "forks": [-1, 1, 1, -1], "eating": 1, "in_room": 0, "note": "released forks F3 and F0, back to thinking"}, {"t": 1911, "who": 2, "kind": "state", "state": "HUNGRY", "forks": [-1, 1, 1, -1], "eating": 1, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 1911, "who": 1, "kind": "state", "state": "RELEASING", "forks": [-1, 1, 1, -1], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 1911, "who": 1, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F1 and F2, back to thinking"}, {"t": 1911, "who": 0, "kind": "state", "state": "EATING", "forks": [0, 0, -1, -1], "eating": 1, "in_room": 0, "note": "monitor grants both forks F0 and F1 at once"}, {"t": 1911, "who": 2, "kind": "state", "state": "EATING", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "monitor grants both forks F2 and F3 at once"}, {"t": 2138, "who": 1, "kind": "state", "state": "HUNGRY", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 2635, "who": 0, "kind": "state", "state": "RELEASING", "forks": [0, 0, 2, 2], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 2636, "who": 0, "kind": "state", "state": "THINKING", "forks": [-1, -1, 2, 2], "eating": 1, "in_room": 0, "note": "released forks F0 and F1, back to thinking"}, {"t": 2674, "who": 3, "kind": "state", "state": "HUNGRY", "forks": [-1, -1, 2, 2], "eating": 1, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 2679, "who": 2, "kind": "state", "state": "RELEASING", "forks": [-1, -1, 2, 2], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 2680, "who": 2, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F2 and F3, back to thinking"}, {"t": 2680, "who": 1, "kind": "state", "state": "EATING", "forks": [-1, 1, 1, -1], "eating": 1, "in_room": 0, "note": "monitor grants both forks F1 and F2 at once"}, {"t": 2680, "who": 3, "kind": "state", "state": "EATING", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "monitor grants both forks F3 and F0 at once"}, {"t": 2904, "who": 2, "kind": "state", "state": "HUNGRY", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 2983, "who": 0, "kind": "state", "state": "HUNGRY", "forks": [3, 1, 1, 3], "eating": 2, "in_room": 0, "note": "is hungry, asks the monitor for both forks"}, {"t": 3321, "who": 3, "kind": "state", "state": "RELEASING", "forks": [3, 1, 1, 3], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 3322, "who": 3, "kind": "state", "state": "THINKING", "forks": [-1, 1, 1, -1], "eating": 1, "in_room": 0, "note": "released forks F3 and F0, back to thinking"}, {"t": 3478, "who": 1, "kind": "state", "state": "RELEASING", "forks": [-1, 1, 1, -1], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 3478, "who": 1, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F1 and F2, back to thinking"}, {"t": 3478, "who": 0, "kind": "state", "state": "EATING", "forks": [0, 0, -1, -1], "eating": 1, "in_room": 0, "note": "monitor grants both forks F0 and F1 at once"}, {"t": 3478, "who": 2, "kind": "state", "state": "EATING", "forks": [0, 0, 2, 2], "eating": 2, "in_room": 0, "note": "monitor grants both forks F2 and F3 at once"}, {"t": 4150, "who": 0, "kind": "state", "state": "RELEASING", "forks": [0, 0, 2, 2], "eating": 1, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 4150, "who": 0, "kind": "state", "state": "THINKING", "forks": [-1, -1, 2, 2], "eating": 1, "in_room": 0, "note": "released forks F0 and F1, back to thinking"}, {"t": 4266, "who": 2, "kind": "state", "state": "RELEASING", "forks": [-1, -1, 2, 2], "eating": 0, "in_room": 0, "note": "finished eating, putting forks down"}, {"t": 4266, "who": 2, "kind": "state", "state": "THINKING", "forks": [-1, -1, -1, -1], "eating": 0, "in_room": 0, "note": "released forks F2 and F3, back to thinking"}];
+const CFG = {"philosophers": 4, "meals": 3, "room": false};
+const N = CFG.philosophers;
+
+let idx = -1, timer = null, speed = 1;
+const st = [];
+
+function reset() {
+  clearTimeout(timer); timer = null; idx = -1;
+  for (let i = 0; i < N; i++) st[i] = { state: "THINKING", note: "" };
+  document.getElementById("play").textContent = "Play";
+  render();
+}
+function applyNext() {
+  if (idx >= EVENTS.length - 1) return false;
+  idx++;
+  const e = EVENTS[idx];
+  st[e.who] = { state: e.state, note: e.note };
+  render();
+  return true;
+}
+function tick() {
+  if (!applyNext()) { pause(); return; }
+  const nxt = EVENTS[idx + 1];
+  if (!nxt) { pause(); return; }
+  timer = setTimeout(tick, Math.max(20, (nxt.t - EVENTS[idx].t) / speed));
+}
+function play() { if (timer) return; document.getElementById("play").textContent = "Pause"; tick(); }
+function pause() { clearTimeout(timer); timer = null; document.getElementById("play").textContent = "Play"; }
+
+function render() {
+  const cur = idx >= 0 ? EVENTS[idx] : null;
+  const forks = cur ? cur.forks : Array(N).fill(-1);
+  document.getElementById("clock").textContent = (cur ? cur.t : 0) + " ms";
+  document.getElementById("count").textContent = idx + 1;
+
+  let h = "";
+  for (let i = 0; i < N; i++) {
+    const s = st[i];
+    h += `<div class="proc ${s.state}"><b>P${i}</b>${s.state.toLowerCase()}<small>${s.note}</small></div>`;
+  }
+  document.getElementById("phils").innerHTML = h;
+
+  // Fork ownership comes straight from the snapshot stored in the event, i.e.
+  // exactly what the monitor recorded when it granted or freed the forks.
+  h = "";
+  for (let i = 0; i < N; i++) h += `<div class="forkbox ${forks[i] >= 0 ? "held" : ""}"><b>F${i}</b><br>${forks[i] >= 0 ? "held by P" + forks[i] : "free"}</div>`;
+  document.getElementById("forks").innerHTML = h;
+
+  const eating = st.map((s, i) => s.state === "EATING" ? "P" + i : null).filter(Boolean);
+  const hungry = st.map((s, i) => s.state === "HUNGRY" || s.state === "ACQUIRING" ? "P" + i : null).filter(Boolean);
+  document.getElementById("table").innerHTML =
+    `eating now: <b>${eating.length ? eating.join(", ") : "nobody"}</b> (${cur ? cur.eating : 0})<br>` +
+    `hungry (waiting in the monitor): ${hungry.length ? hungry.join(", ") : "nobody"}<br>` +
+    `forks in use: ${forks.filter(f => f >= 0).length} / ${N}`;
+  // Deadlock would look like: every fork held and every holder still waiting for
+  // another fork. (A philosopher who is RELEASING still holds forks for a moment,
+  // but is about to free them, so that is not a deadlock.)
+  const holders = [...new Set(forks.filter(f => f >= 0))];
+  const allHeld = forks.every(f => f >= 0) && holders.every(h => st[h].state === "ACQUIRING");
+  document.getElementById("alert").textContent = allHeld ? "DEADLOCK PATTERN: all forks held, everyone waiting" : "";
+
+  const rows = document.querySelectorAll("#log tr[data-i]");
+  rows.forEach(r => { const i = +r.dataset.i; r.className = i === idx ? "cur" : (i < idx ? "done" : ""); });
+  if (cur) { const r = rows[idx]; if (r) r.scrollIntoView({ block: "nearest" }); }
+  placeCursor(cur ? cur.t : 0);
+}
+
+// Cursor: plain pixel arithmetic (34px label column + fraction of the track).
+function placeCursor(t) {
+  const gantt = document.getElementById("gantt"), cursor = document.getElementById("cursor");
+  if (!cursor) return;
+  const trackWidth = Math.max(0, gantt.clientWidth - 34);
+  const frac = TMAX > 0 ? Math.min(1, Math.max(0, t / TMAX)) : 0;
+  cursor.style.left = Math.round(34 + frac * trackWidth) + "px";
+}
+window.addEventListener("resize", () => placeCursor(idx >= 0 ? EVENTS[idx].t : 0));
+
+// ---- static parts built once: event table + gantt ----
+const TMAX = EVENTS.length ? EVENTS[EVENTS.length - 1].t : 0;
+const SPAN = TMAX || 1;
+document.getElementById("tmax").textContent = TMAX + " ms";
+(function buildLog() {
+  let h = "<table><tr><th>#</th><th>time</th><th>who</th><th>state</th>";
+  for (let i = 0; i < N; i++) h += `<th>F${i}</th>`;
+  h += "<th>eating</th><th>note</th></tr>";
+  EVENTS.forEach((e, i) => {
+    h += `<tr data-i="${i}"><td>${i + 1}</td><td>${e.t} ms</td><td>P${e.who}</td><td>${e.state}</td>`;
+    e.forks.forEach(f => h += `<td>${f >= 0 ? "P" + f : "-"}</td>`);
+    h += `<td>${e.eating}</td><td>${e.note || ""}</td></tr>`;
+  });
+  document.getElementById("log").innerHTML = h + "</table>";
+})();
+(function buildGantt() {
+  const segs = {}, open = {};
+  const names = [];
+  for (let i = 0; i < N; i++) names.push("P" + i);
+  for (let i = 0; i < N; i++) names.push("F" + i);
+  names.forEach(n => segs[n] = []);
+  let prevForks = Array(N).fill(-1);
+  for (const e of EVENTS) {
+    const k = "P" + e.who;
+    if (e.kind === "state") {
+      if (open[k]) { segs[k].push({ ...open[k], e: e.t }); delete open[k]; }
+      if (e.state !== "THINKING") open[k] = { s: e.t, c: e.state };
+    }
+    for (let f = 0; f < N; f++) {
+      if (e.forks[f] !== prevForks[f]) {
+        const fk = "F" + f;
+        if (open[fk]) { segs[fk].push({ ...open[fk], e: e.t }); delete open[fk]; }
+        if (e.forks[f] >= 0) open[fk] = { s: e.t, c: "F" };
+      }
+    }
+    prevForks = e.forks;
+  }
+  let h = "";
+  for (const n of names) {
+    h += `<div class="grow"><span class="lbl">${n}</span><div class="gtrack">`;
+    for (const s of segs[n]) h += `<div class="seg ${s.c}" style="left:${s.s / SPAN * 100}%;width:${Math.max(0.3, (s.e - s.s) / SPAN * 100)}%" title="${s.c} ${s.s}-${s.e} ms"></div>`;
+    h += "</div></div>";
+  }
+  document.getElementById("gantt").innerHTML = h + '<div id="cursor"></div>';
+})();
+
+document.getElementById("play").onclick = () => timer ? pause() : play();
+document.getElementById("step").onclick = () => { pause(); applyNext(); };
+document.getElementById("reset").onclick = reset;
+document.getElementById("speed").onchange = e => speed = +e.target.value;
+reset();
+</script>
+</body>
+</html>

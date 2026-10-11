@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Readers-Writers (monitor) - execution replay</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+  header { background: #2b3a55; color: #fff; padding: 14px 22px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header .sub { font-size: 13px; opacity: .9; }
+  .ok { color: #7CFC9A; font-weight: bold; } .bad { color: #ff8a80; font-weight: bold; }
+  main { padding: 16px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .wide { grid-column: 1 / -1; }
+  .card { background: #fff; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: #2b3a55; }
+  .controls button, .controls select { font-size: 14px; padding: 6px 12px; margin-right: 6px; }
+  .procs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .proc { width: 118px; border-radius: 6px; padding: 8px; border: 2px solid #ccc; background: #eee; text-align: center; }
+  .proc b { display: block; font-size: 16px; }
+  .proc small { display: block; font-size: 11px; min-height: 14px; color: #444; }
+  .idle { background: #ececec; border-color: #ccc; }
+  .wait { background: #fff3cd; border-color: #e0b400; }
+  .active-r { background: #d4edda; border-color: #28a745; }
+  .active-w { background: #f8d7da; border-color: #dc3545; }
+  .leaving { background: #cfe2ff; border-color: #0d6efd; }
+  #resource, #monitor { font-size: 15px; line-height: 1.7; }
+  #resource .big { font-size: 28px; font-weight: bold; }
+  .free { color: #28a745; } .busy-r { color: #1e7e34; } .busy-w { color: #dc3545; }
+  .legend span { display: inline-block; padding: 2px 8px; margin-right: 6px; border-radius: 4px; font-size: 12px; border: 1px solid #aaa; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 3px 6px; border-bottom: 1px solid #e3e3e3; text-align: left; }
+  th { background: #eef2f7; position: sticky; top: 0; }
+  tr.cur { background: #fff3cd; font-weight: bold; }
+  tr.done { color: #666; }
+  #log { max-height: 320px; overflow: auto; }
+  .gantt { position: relative; }
+  .grow { display: flex; align-items: center; height: 22px; margin: 3px 0; }
+  .grow .lbl { width: 34px; font-weight: bold; font-size: 13px; }
+  .gtrack { position: relative; flex: 1; height: 18px; background: #f0f0f0; border-radius: 3px; }
+  .seg { position: absolute; top: 0; height: 100%; border-radius: 3px; opacity: .9; }
+  .seg.w { background: #e0b400; } .seg.r { background: #28a745; } .seg.x { background: #dc3545; }
+  #cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #000; left: 34px; }
+  .axis { margin-left: 34px; font-size: 11px; color: #666; display: flex; justify-content: space-between; }
+  ul.checks { margin: 0; padding-left: 18px; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Readers-Writers Problem - monitor solution, writer preference (replay of a real run)</h1>
+  <div class="sub">5 readers, 2 writers, 3 rounds each | 84 events recorded | max readers at once: 5 | final value 6 (expected 6) | <span class="ok">all 8 checks passed</span></div>
+</header>
+<main>
+  <div class="card wide controls">
+    <button id="play">Play</button>
+    <button id="step">Step</button>
+    <button id="reset">Reset</button>
+    speed <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
+    &nbsp; clock: <b id="clock">0 ms</b> &nbsp; event <b id="count">0</b> / 84
+    <span class="legend" style="float:right">
+      <span class="idle">idle</span><span class="wait">waiting</span><span class="active-r">reading</span><span class="active-w">writing</span><span class="leaving">finished</span>
+    </span>
+  </div>
+
+  <div class="card"><h2>Readers</h2><div class="procs" id="readers"></div></div>
+  <div class="card"><h2>Writers</h2><div class="procs" id="writers"></div></div>
+
+  <div class="card"><h2>Shared resource (critical section)</h2><div id="resource"></div></div>
+  <div class="card"><h2>Monitor state</h2><div id="monitor"></div></div>
+
+  <div class="card wide"><h2>Timeline (RES row = who holds the resource; yellow = waiting, green = reading, red = writing)</h2>
+    <div class="gantt" id="gantt"></div><div class="axis"><span>0 ms</span><span id="tmax"></span></div></div>
+
+  <div class="card wide"><h2>Event log recorded by the program</h2><div id="log"></div></div>
+  <div class="card wide"><h2>Checks run by the program</h2><ul class="checks"><li>PASS - 1. several readers read at the same time <i>max readers at once = 5 (scheduling dependent)</i></li><li>PASS - 2. no writer overlapped another writer <i></i></li><li>PASS - 3. no reader/writer overlap <i></i></li><li>PASS - 4. every thread finished its ROUNDS operations <i>21 operations recorded</i></li><li>PASS - 5. final value equals number of writes <i>value 6, expected 6, last written by W1</i></li><li>PASS - 6. no lost update (writes were 1,2,3,... in order) <i>writes recorded: [1, 2, 3, 4, 5, 6]</i></li><li>PASS - 7. all threads finished within the timeout <i>3.69 s, limit 60.0 s</i></li><li>PASS - 8. monitor back in a consistent final state <i>active_readers=0 writer_active=False waiting_writers=0</i></li></ul></div>
+</main>
+<script>
+const EVENTS = [{"t": 59, "role": "reader", "id": 4, "state": "waiting", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": null, "note": ""}, {"t": 59, "role": "reader", "id": 4, "state": "reading", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 139, "role": "reader", "id": 5, "state": "waiting", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": null, "note": ""}, {"t": 139, "role": "reader", "id": 5, "state": "reading", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 182, "role": "writer", "id": 2, "state": "waiting", "active_readers": 2, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 212, "role": "writer", "id": 1, "state": "waiting", "active_readers": 2, "writer_active": false, "waiting_writers": 2, "resource": "readers", "value": null, "note": ""}, {"t": 306, "role": "reader", "id": 5, "state": "finished reading", "active_readers": 1, "writer_active": false, "waiting_writers": 2, "resource": "readers", "value": 0, "note": ""}, {"t": 306, "role": "reader", "id": 5, "state": "idle", "active_readers": 1, "writer_active": false, "waiting_writers": 2, "resource": "readers", "value": null, "note": ""}, {"t": 330, "role": "reader", "id": 4, "state": "finished reading", "active_readers": 0, "writer_active": false, "waiting_writers": 2, "resource": "free", "value": 0, "note": ""}, {"t": 532, "role": "reader", "id": 4, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 2, "resource": "free", "value": null, "note": ""}, {"t": 532, "role": "writer", "id": 2, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": 0, "note": "changing 0 -> 1"}, {"t": 533, "role": "reader", "id": 2, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 535, "role": "reader", "id": 3, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 535, "role": "reader", "id": 1, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 664, "role": "reader", "id": 5, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 788, "role": "writer", "id": 2, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": 1, "note": "value is now 1"}, {"t": 788, "role": "writer", "id": 2, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": null, "note": ""}, {"t": 788, "role": "writer", "id": 1, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": 1, "note": "changing 1 -> 2"}, {"t": 930, "role": "writer", "id": 2, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 1088, "role": "reader", "id": 4, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 1110, "role": "writer", "id": 1, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": 2, "note": "value is now 2"}, {"t": 1110, "role": "writer", "id": 1, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": null, "note": ""}, {"t": 1110, "role": "writer", "id": 2, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": 2, "note": "changing 2 -> 3"}, {"t": 1383, "role": "writer", "id": 2, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": 3, "note": "value is now 3"}, {"t": 1384, "role": "writer", "id": 2, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": null, "note": ""}, {"t": 1384, "role": "reader", "id": 2, "state": "reading", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 1384, "role": "reader", "id": 3, "state": "reading", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 1384, "role": "reader", "id": 1, "state": "reading", "active_readers": 3, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 1384, "role": "reader", "id": 4, "state": "reading", "active_readers": 4, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 1384, "role": "reader", "id": 5, "state": "reading", "active_readers": 5, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 1547, "role": "reader", "id": 4, "state": "finished reading", "active_readers": 4, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": ""}, {"t": 1547, "role": "reader", "id": 4, "state": "idle", "active_readers": 4, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": null, "note": ""}, {"t": 1563, "role": "reader", "id": 3, "state": "finished reading", "active_readers": 3, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 3, "note": ""}, {"t": 1563, "role": "reader", "id": 3, "state": "idle", "active_readers": 3, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": null, "note": ""}, {"t": 1625, "role": "writer", "id": 1, "state": "waiting", "active_readers": 3, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 1631, "role": "reader", "id": 5, "state": "finished reading", "active_readers": 2, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 3, "note": ""}, {"t": 1631, "role": "reader", "id": 5, "state": "idle", "active_readers": 2, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 1647, "role": "reader", "id": 2, "state": "finished reading", "active_readers": 1, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 3, "note": ""}, {"t": 1647, "role": "reader", "id": 2, "state": "idle", "active_readers": 1, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 1673, "role": "writer", "id": 2, "state": "waiting", "active_readers": 1, "writer_active": false, "waiting_writers": 2, "resource": "readers", "value": null, "note": ""}, {"t": 1728, "role": "reader", "id": 3, "state": "waiting", "active_readers": 1, "writer_active": false, "waiting_writers": 2, "resource": "readers", "value": null, "note": ""}, {"t": 1731, "role": "reader", "id": 1, "state": "finished reading", "active_readers": 0, "writer_active": false, "waiting_writers": 2, "resource": "free", "value": 3, "note": ""}, {"t": 1731, "role": "reader", "id": 1, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 2, "resource": "free", "value": null, "note": ""}, {"t": 1731, "role": "writer", "id": 2, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": 3, "note": "changing 3 -> 4"}, {"t": 1885, "role": "reader", "id": 5, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 1894, "role": "reader", "id": 4, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 1907, "role": "reader", "id": 1, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 1, "resource": "writer", "value": null, "note": ""}, {"t": 2078, "role": "writer", "id": 2, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": 4, "note": "value is now 4"}, {"t": 2078, "role": "writer", "id": 2, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": null, "note": ""}, {"t": 2078, "role": "writer", "id": 1, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": 4, "note": "changing 4 -> 5"}, {"t": 2222, "role": "reader", "id": 2, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": null, "note": ""}, {"t": 2513, "role": "writer", "id": 1, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": 5, "note": "value is now 5"}, {"t": 2513, "role": "writer", "id": 1, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": null, "note": ""}, {"t": 2513, "role": "reader", "id": 3, "state": "reading", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 2513, "role": "reader", "id": 5, "state": "reading", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 2513, "role": "reader", "id": 1, "state": "reading", "active_readers": 3, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 2513, "role": "reader", "id": 4, "state": "reading", "active_readers": 4, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 2513, "role": "reader", "id": 2, "state": "reading", "active_readers": 5, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 2650, "role": "writer", "id": 1, "state": "waiting", "active_readers": 5, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 2695, "role": "reader", "id": 3, "state": "finished reading", "active_readers": 4, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 5, "note": ""}, {"t": 2695, "role": "reader", "id": 3, "state": "idle", "active_readers": 4, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 2728, "role": "reader", "id": 5, "state": "finished reading", "active_readers": 3, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 5, "note": ""}, {"t": 2728, "role": "reader", "id": 5, "state": "idle", "active_readers": 3, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 2830, "role": "reader", "id": 2, "state": "finished reading", "active_readers": 2, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 5, "note": ""}, {"t": 2830, "role": "reader", "id": 2, "state": "idle", "active_readers": 2, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 2861, "role": "reader", "id": 1, "state": "finished reading", "active_readers": 1, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": 5, "note": ""}, {"t": 2861, "role": "reader", "id": 1, "state": "idle", "active_readers": 1, "writer_active": false, "waiting_writers": 1, "resource": "readers", "value": null, "note": ""}, {"t": 2894, "role": "reader", "id": 4, "state": "finished reading", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": 5, "note": ""}, {"t": 2894, "role": "reader", "id": 4, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 1, "resource": "free", "value": null, "note": ""}, {"t": 2894, "role": "writer", "id": 1, "state": "writing", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": 5, "note": "changing 5 -> 6"}, {"t": 3222, "role": "reader", "id": 1, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": null, "note": ""}, {"t": 3255, "role": "reader", "id": 3, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": null, "note": ""}, {"t": 3263, "role": "reader", "id": 2, "state": "waiting", "active_readers": 0, "writer_active": true, "waiting_writers": 0, "resource": "writer", "value": null, "note": ""}, {"t": 3384, "role": "writer", "id": 1, "state": "finished writing", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": 6, "note": "value is now 6"}, {"t": 3385, "role": "writer", "id": 1, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": null, "note": ""}, {"t": 3385, "role": "reader", "id": 3, "state": "reading", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 6, "note": "sees value 6"}, {"t": 3385, "role": "reader", "id": 1, "state": "reading", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 6, "note": "sees value 6"}, {"t": 3385, "role": "reader", "id": 2, "state": "reading", "active_readers": 3, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 6, "note": "sees value 6"}, {"t": 3538, "role": "reader", "id": 1, "state": "finished reading", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 6, "note": ""}, {"t": 3538, "role": "reader", "id": 1, "state": "idle", "active_readers": 2, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": null, "note": ""}, {"t": 3593, "role": "reader", "id": 3, "state": "finished reading", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": 6, "note": ""}, {"t": 3593, "role": "reader", "id": 3, "state": "idle", "active_readers": 1, "writer_active": false, "waiting_writers": 0, "resource": "readers", "value": null, "note": ""}, {"t": 3689, "role": "reader", "id": 2, "state": "finished reading", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": 6, "note": ""}, {"t": 3689, "role": "reader", "id": 2, "state": "idle", "active_readers": 0, "writer_active": false, "waiting_writers": 0, "resource": "free", "value": null, "note": ""}];
+const CFG = {"readers": 5, "writers": 2, "rounds": 3};
+
+let idx = -1, timer = null, speed = 1, value = 0, writtenBy = "nobody yet";
+const st = {};
+const key = e => e.role + e.id;
+
+function reset() {
+  clearTimeout(timer); timer = null; idx = -1; value = 0; writtenBy = "nobody yet";
+  for (let i = 1; i <= CFG.readers; i++) st["reader" + i] = { state: "idle", note: "" };
+  for (let i = 1; i <= CFG.writers; i++) st["writer" + i] = { state: "idle", note: "" };
+  document.getElementById("play").textContent = "Play";
+  render();
+}
+function applyNext() {
+  if (idx >= EVENTS.length - 1) return false;
+  idx++;
+  const e = EVENTS[idx];
+  st[key(e)] = { state: e.state, note: e.note };
+  if (e.state === "finished writing") { value = e.value; writtenBy = "W" + e.id; }
+  render();
+  return true;
+}
+function tick() {
+  if (!applyNext()) { pause(); return; }
+  const nxt = EVENTS[idx + 1];
+  if (!nxt) { pause(); return; }
+  timer = setTimeout(tick, Math.max(20, (nxt.t - EVENTS[idx].t) / speed));
+}
+function play() { if (timer) return; document.getElementById("play").textContent = "Pause"; tick(); }
+function pause() { clearTimeout(timer); timer = null; document.getElementById("play").textContent = "Play"; }
+
+function cls(s) {
+  if (s === "waiting") return "wait";
+  if (s === "reading") return "active-r";
+  if (s === "writing") return "active-w";
+  if (s.startsWith("finished")) return "leaving";
+  return "idle";
+}
+
+function render() {
+  const cur = idx >= 0 ? EVENTS[idx] : null;
+  document.getElementById("clock").textContent = (cur ? cur.t : 0) + " ms";
+  document.getElementById("count").textContent = idx + 1;
+
+  let h = "";
+  for (let i = 1; i <= CFG.readers; i++) { const s = st["reader" + i];
+    h += `<div class="proc ${cls(s.state)}"><b>R${i}</b>${s.state}<small>${s.note}</small></div>`; }
+  document.getElementById("readers").innerHTML = h;
+  h = "";
+  for (let i = 1; i <= CFG.writers; i++) { const s = st["writer" + i];
+    h += `<div class="proc ${cls(s.state)}"><b>W${i}</b>${s.state}<small>${s.note}</small></div>`; }
+  document.getElementById("writers").innerHTML = h;
+
+  // Everything below comes from the monitor-state snapshot stored in the event
+  // (active_readers / writer_active / waiting_writers / resource), so the panel
+  // can only ever show states the monitor really was in.
+  const readersIn = [], waitingR = [], waitingW = [];
+  let writerIn = null;
+  for (const k in st) {
+    const s = st[k].state, lbl = (k.startsWith("reader") ? "R" : "W") + k.replace(/\D/g, "");
+    if (s === "reading") readersIn.push(lbl);
+    if (s === "writing") writerIn = lbl;
+    if (s === "waiting") (k.startsWith("reader") ? waitingR : waitingW).push(lbl);
+  }
+  const owner = cur ? cur.resource : "free";
+  const nR = cur ? cur.active_readers : 0;
+  let status;
+  if (owner === "writer") status = `<span class="busy-w">LOCKED FOR WRITING by ${writerIn}</span>`;
+  else if (owner === "readers") status = `<span class="busy-r">BEING READ by ${readersIn.join(", ")} (${nR} at once)</span>`;
+  else status = `<span class="free">FREE</span>`;
+  document.getElementById("resource").innerHTML =
+    `status: ${status}<br>value: <span class="big">${value}</span><br>last written by: ${writtenBy}`;
+  document.getElementById("monitor").innerHTML =
+    `active_readers: <b>${nR}</b><br>writer_active: <b>${cur && cur.writer_active ? "True" : "False"}</b>` +
+    `<br>waiting_writers: <b>${cur ? cur.waiting_writers : 0}</b> ${waitingW.length ? "(" + waitingW.join(", ") + ")" : ""}` +
+    `<br>readers held back: ${waitingR.length ? waitingR.join(", ") : "none"}`;
+
+  const rows = document.querySelectorAll("#log tr[data-i]");
+  rows.forEach(r => { const i = +r.dataset.i; r.className = i === idx ? "cur" : (i < idx ? "done" : ""); });
+  if (cur) { const r = rows[idx]; if (r) r.scrollIntoView({ block: "nearest" }); }
+  placeCursor(cur ? cur.t : 0);
+}
+
+// The cursor is positioned with plain pixel arithmetic (label column is 34px wide,
+// the rest of the row is the track). A CSS calc() mixing % and px products is not
+// portable, and a zero-length run (TMAX = 0) must not divide by zero.
+function placeCursor(t) {
+  const gantt = document.getElementById("gantt"), cursor = document.getElementById("cursor");
+  if (!cursor) return;
+  const trackWidth = Math.max(0, gantt.clientWidth - 34);
+  const frac = TMAX > 0 ? Math.min(1, Math.max(0, t / TMAX)) : 0;
+  cursor.style.left = Math.round(34 + frac * trackWidth) + "px";
+}
+window.addEventListener("resize", () => placeCursor(idx >= 0 ? EVENTS[idx].t : 0));
+
+// ---- static parts built once: event table + gantt ----
+const TMAX = EVENTS.length ? EVENTS[EVENTS.length - 1].t : 0;   // total run time in ms (0 if nothing happened)
+const SPAN = TMAX || 1;                                            // safe divisor for percentages
+document.getElementById("tmax").textContent = TMAX + " ms";
+(function buildLog() {
+  let h = "<table><tr><th>#</th><th>time</th><th>who</th><th>state</th><th>active readers</th><th>writer active</th><th>waiting writers</th><th>resource</th><th>note</th></tr>";
+  EVENTS.forEach((e, i) => {
+    h += `<tr data-i="${i}"><td>${i + 1}</td><td>${e.t} ms</td><td>${e.role === "reader" ? "R" : "W"}${e.id}</td><td>${e.state}</td><td>${e.active_readers}</td><td>${e.writer_active ? "yes" : "no"}</td><td>${e.waiting_writers}</td><td>${e.resource}</td><td>${e.note || ""}</td></tr>`;
+  });
+  document.getElementById("log").innerHTML = h + "</table>";
+})();
+(function buildGantt() {
+  const segs = {}, open = {};
+  const names = ["resource"];
+  for (let i = 1; i <= CFG.readers; i++) names.push("reader" + i);
+  for (let i = 1; i <= CFG.writers; i++) names.push("writer" + i);
+  names.forEach(n => segs[n] = []);
+  let prevOwner = "free";
+  for (const e of EVENTS) {
+    if (e.resource !== prevOwner) {
+      if (open.resource) { segs.resource.push({ ...open.resource, e: e.t }); delete open.resource; }
+      if (e.resource !== "free") open.resource = { s: e.t, c: e.resource === "readers" ? "r" : "x" };
+      prevOwner = e.resource;
+    }
+    const k = key(e);
+    if (e.state === "waiting") open[k] = { s: e.t, c: "w" };
+    else if (e.state === "reading" || e.state === "writing") {
+      if (open[k]) segs[k].push({ ...open[k], e: e.t });
+      open[k] = { s: e.t, c: e.state === "reading" ? "r" : "x" };
+    } else if (e.state.startsWith("finished")) {
+      if (open[k]) { segs[k].push({ ...open[k], e: e.t }); delete open[k]; }
+    }
+  }
+  let h = "";
+  for (const n of names) {
+    const lbl = n === "resource" ? "RES" : (n.startsWith("reader") ? "R" : "W") + n.replace(/\D/g, "");
+    h += `<div class="grow"><span class="lbl">${lbl}</span><div class="gtrack">`;
+    for (const s of segs[n]) h += `<div class="seg ${s.c}" style="left:${s.s / SPAN * 100}%;width:${Math.max(0.3, (s.e - s.s) / SPAN * 100)}%" title="${s.s}-${s.e} ms"></div>`;
+    h += "</div></div>";
+  }
+  document.getElementById("gantt").innerHTML = h + '<div id="cursor"></div>';
+})();
+
+document.getElementById("play").onclick = () => timer ? pause() : play();
+document.getElementById("step").onclick = () => { pause(); applyNext(); };
+document.getElementById("reset").onclick = reset;
+document.getElementById("speed").onchange = e => speed = +e.target.value;
+reset();
+</script>
+</body>
+</html>
