@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Readers-Writers (semaphores) - execution replay</title>
+<style>
+  body { font-family: Segoe UI, Arial, sans-serif; margin: 0; background: #f4f6f9; color: #222; }
+  header { background: #1f3a5f; color: #fff; padding: 14px 22px; }
+  header h1 { margin: 0 0 4px; font-size: 20px; }
+  header .sub { font-size: 13px; opacity: .9; }
+  .ok { color: #7CFC9A; font-weight: bold; } .bad { color: #ff8a80; font-weight: bold; }
+  main { padding: 16px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .wide { grid-column: 1 / -1; }
+  .card { background: #fff; border-radius: 8px; padding: 12px 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  .card h2 { margin: 0 0 10px; font-size: 15px; color: #1f3a5f; }
+  .controls button, .controls select { font-size: 14px; padding: 6px 12px; margin-right: 6px; }
+  .procs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .proc { width: 118px; border-radius: 6px; padding: 8px; border: 2px solid #ccc; background: #eee; text-align: center; transition: background .15s; }
+  .proc b { display: block; font-size: 16px; }
+  .proc small { display: block; font-size: 11px; min-height: 14px; color: #444; }
+  .idle { background: #ececec; border-color: #ccc; }
+  .wait { background: #fff3cd; border-color: #e0b400; }
+  .active-r { background: #d4edda; border-color: #28a745; }
+  .active-w { background: #f8d7da; border-color: #dc3545; }
+  .leaving { background: #cfe2ff; border-color: #0d6efd; }
+  #resource { font-size: 15px; line-height: 1.7; }
+  #resource .big { font-size: 28px; font-weight: bold; }
+  .free { color: #28a745; } .busy-r { color: #1e7e34; } .busy-w { color: #dc3545; }
+  .legend span { display: inline-block; padding: 2px 8px; margin-right: 6px; border-radius: 4px; font-size: 12px; border: 1px solid #aaa; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 3px 6px; border-bottom: 1px solid #e3e3e3; text-align: left; }
+  th { background: #eef2f7; position: sticky; top: 0; }
+  tr.cur { background: #fff3cd; font-weight: bold; }
+  tr.done { color: #666; }
+  #log { max-height: 320px; overflow: auto; }
+  .gantt { position: relative; }
+  .grow { display: flex; align-items: center; height: 22px; margin: 3px 0; }
+  .grow .lbl { width: 34px; font-weight: bold; font-size: 13px; }
+  .gtrack { position: relative; flex: 1; height: 18px; background: #f0f0f0; border-radius: 3px; }
+  .seg { position: absolute; top: 0; height: 100%; border-radius: 3px; opacity: .9; }
+  .seg.w { background: #e0b400; } .seg.r { background: #28a745; } .seg.x { background: #dc3545; }
+  #cursor { position: absolute; top: 0; bottom: 0; width: 2px; background: #000; left: 34px; }
+  .axis { margin-left: 34px; font-size: 11px; color: #666; display: flex; justify-content: space-between; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Readers-Writers Problem - semaphore solution (replay of a real run)</h1>
+  <div class="sub">5 readers, 2 writers, 3 rounds each | 96 events recorded | max readers inside at once: 4 | final value 6 (expected 6) | <span class="ok">all checks passed - no read/write overlap, no lost update</span></div>
+</header>
+<main>
+  <div class="card wide controls">
+    <button id="play">Play</button>
+    <button id="step">Step</button>
+    <button id="reset">Reset</button>
+    speed <select id="speed"><option value="0.5">0.5x</option><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option></select>
+    &nbsp; clock: <b id="clock">0 ms</b> &nbsp; event <b id="count">0</b> / 96
+    <span class="legend" style="float:right">
+      <span class="idle">idle</span><span class="wait">waiting</span><span class="active-r">reading</span><span class="active-w">writing</span><span class="leaving">finished / released</span>
+    </span>
+  </div>
+
+  <div class="card"><h2>Readers</h2><div class="procs" id="readers"></div></div>
+  <div class="card"><h2>Writers</h2><div class="procs" id="writers"></div></div>
+
+  <div class="card"><h2>Shared resource (critical section)</h2><div id="resource"></div></div>
+  <div class="card"><h2>Who is waiting</h2><div id="waiting">nobody</div></div>
+
+  <div class="card wide"><h2>Timeline (RES row = who holds the resource; yellow = waiting, green = reading, red = writing)</h2>
+    <div class="gantt" id="gantt"></div><div class="axis"><span>0 ms</span><span id="tmax"></span></div></div>
+
+  <div class="card wide"><h2>Event log recorded by the program</h2><div id="log"></div></div>
+</main>
+<script>
+const EVENTS = [{"t": 170, "role": "reader", "id": 5, "state": "waiting", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 170, "role": "reader", "id": 5, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 225, "role": "reader", "id": 4, "state": "waiting", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 225, "role": "reader", "id": 4, "state": "reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 295, "role": "reader", "id": 3, "state": "waiting", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 295, "role": "reader", "id": 3, "state": "reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 310, "role": "reader", "id": 2, "state": "waiting", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 310, "role": "reader", "id": 2, "state": "reading", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": 0, "note": "sees value 0"}, {"t": 352, "role": "writer", "id": 2, "state": "waiting", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 368, "role": "reader", "id": 1, "state": "waiting", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 414, "role": "reader", "id": 5, "state": "finished reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 0, "note": ""}, {"t": 414, "role": "reader", "id": 5, "state": "idle", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 477, "role": "reader", "id": 3, "state": "finished reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 0, "note": ""}, {"t": 477, "role": "reader", "id": 3, "state": "idle", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 511, "role": "writer", "id": 1, "state": "waiting", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 547, "role": "reader", "id": 2, "state": "finished reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 0, "note": ""}, {"t": 547, "role": "reader", "id": 2, "state": "idle", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 577, "role": "reader", "id": 3, "state": "waiting", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 597, "role": "reader", "id": 4, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 0, "note": ""}, {"t": 597, "role": "reader", "id": 4, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 597, "role": "reader", "id": 4, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 597, "role": "writer", "id": 2, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 0, "note": "changing 0 -> 1"}, {"t": 730, "role": "reader", "id": 4, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 987, "role": "writer", "id": 2, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 1, "note": "value is now 1"}, {"t": 987, "role": "writer", "id": 2, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 987, "role": "writer", "id": 2, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 987, "role": "reader", "id": 1, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 1, "note": "sees value 1"}, {"t": 995, "role": "reader", "id": 2, "state": "waiting", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 1002, "role": "reader", "id": 5, "state": "waiting", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 1292, "role": "reader", "id": 1, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 1, "note": ""}, {"t": 1292, "role": "reader", "id": 1, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 1292, "role": "reader", "id": 1, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 1292, "role": "writer", "id": 1, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 1, "note": "changing 1 -> 2"}, {"t": 1414, "role": "writer", "id": 2, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 1517, "role": "reader", "id": 1, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 1676, "role": "writer", "id": 1, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 2, "note": "value is now 2"}, {"t": 1676, "role": "writer", "id": 1, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 1676, "role": "writer", "id": 1, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 1676, "role": "reader", "id": 3, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 2, "note": "sees value 2"}, {"t": 1676, "role": "reader", "id": 4, "state": "reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 2, "note": "sees value 2"}, {"t": 1676, "role": "reader", "id": 2, "state": "reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 2, "note": "sees value 2"}, {"t": 1676, "role": "reader", "id": 5, "state": "reading", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": 2, "note": "sees value 2"}, {"t": 1848, "role": "reader", "id": 2, "state": "finished reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 2, "note": ""}, {"t": 1848, "role": "reader", "id": 2, "state": "idle", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 1911, "role": "reader", "id": 3, "state": "finished reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 2, "note": ""}, {"t": 1911, "role": "reader", "id": 3, "state": "idle", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 1999, "role": "reader", "id": 5, "state": "finished reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 2, "note": ""}, {"t": 1999, "role": "reader", "id": 5, "state": "idle", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 2023, "role": "reader", "id": 4, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 2, "note": ""}, {"t": 2023, "role": "reader", "id": 4, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 2023, "role": "reader", "id": 4, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 2023, "role": "writer", "id": 2, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 2, "note": "changing 2 -> 3"}, {"t": 2108, "role": "reader", "id": 2, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 2135, "role": "reader", "id": 5, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 2181, "role": "reader", "id": 3, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 2231, "role": "writer", "id": 1, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 2390, "role": "reader", "id": 4, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 2407, "role": "writer", "id": 2, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 3, "note": "value is now 3"}, {"t": 2408, "role": "writer", "id": 2, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 2408, "role": "writer", "id": 2, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 2408, "role": "reader", "id": 1, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 2408, "role": "reader", "id": 2, "state": "reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 2408, "role": "reader", "id": 5, "state": "reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 2408, "role": "reader", "id": 3, "state": "reading", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": 3, "note": "sees value 3"}, {"t": 2521, "role": "writer", "id": 2, "state": "waiting", "readers_inside": 4, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 2700, "role": "reader", "id": 2, "state": "finished reading", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": 3, "note": ""}, {"t": 2700, "role": "reader", "id": 2, "state": "idle", "readers_inside": 3, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 2749, "role": "reader", "id": 3, "state": "finished reading", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": 3, "note": ""}, {"t": 2749, "role": "reader", "id": 3, "state": "idle", "readers_inside": 2, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 2796, "role": "reader", "id": 1, "state": "finished reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 3, "note": ""}, {"t": 2796, "role": "reader", "id": 1, "state": "idle", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 2796, "role": "reader", "id": 5, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 3, "note": ""}, {"t": 2796, "role": "reader", "id": 5, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 2796, "role": "reader", "id": 5, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 2796, "role": "writer", "id": 1, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 3, "note": "changing 3 -> 4"}, {"t": 2944, "role": "reader", "id": 1, "state": "waiting", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": null, "note": ""}, {"t": 3154, "role": "writer", "id": 1, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 4, "note": "value is now 4"}, {"t": 3154, "role": "writer", "id": 1, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 3154, "role": "writer", "id": 1, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 3154, "role": "reader", "id": 4, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 4, "note": "sees value 4"}, {"t": 3231, "role": "writer", "id": 1, "state": "waiting", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": null, "note": ""}, {"t": 3498, "role": "reader", "id": 4, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 4, "note": ""}, {"t": 3498, "role": "reader", "id": 4, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 3498, "role": "reader", "id": 4, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 3498, "role": "writer", "id": 2, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 4, "note": "changing 4 -> 5"}, {"t": 3787, "role": "writer", "id": 2, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 5, "note": "value is now 5"}, {"t": 3787, "role": "writer", "id": 2, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 3787, "role": "writer", "id": 2, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 3787, "role": "reader", "id": 1, "state": "reading", "readers_inside": 1, "writer_inside": false, "resource": "readers", "value": 5, "note": "sees value 5"}, {"t": 4084, "role": "reader", "id": 1, "state": "finished reading", "readers_inside": 0, "writer_inside": false, "resource": "readers", "value": 5, "note": ""}, {"t": 4084, "role": "reader", "id": 1, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 4084, "role": "reader", "id": 1, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}, {"t": 4084, "role": "writer", "id": 1, "state": "writing", "readers_inside": 0, "writer_inside": true, "resource": "writer", "value": 5, "note": "changing 5 -> 6"}, {"t": 4417, "role": "writer", "id": 1, "state": "finished writing", "readers_inside": 0, "writer_inside": false, "resource": "writer", "value": 6, "note": "value is now 6"}, {"t": 4417, "role": "writer", "id": 1, "state": "released resource", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": "resource is free again"}, {"t": 4417, "role": "writer", "id": 1, "state": "idle", "readers_inside": 0, "writer_inside": false, "resource": "free", "value": null, "note": ""}];
+const CFG = {"readers": 5, "writers": 2, "rounds": 3};
+
+let idx = -1, timer = null, speed = 1, value = 0, writtenBy = "nobody yet";
+const st = {};
+const key = e => e.role + e.id;
+
+function reset() {
+  clearTimeout(timer); timer = null; idx = -1; value = 0; writtenBy = "nobody yet";
+  for (let i = 1; i <= CFG.readers; i++) st["reader" + i] = { state: "idle", note: "" };
+  for (let i = 1; i <= CFG.writers; i++) st["writer" + i] = { state: "idle", note: "" };
+  document.getElementById("play").textContent = "Play";
+  render();
+}
+
+function applyNext() {
+  if (idx >= EVENTS.length - 1) return false;
+  idx++;
+  const e = EVENTS[idx];
+  st[key(e)] = { state: e.state, note: e.note };
+  if (e.state === "finished writing") { value = e.value; writtenBy = "W" + e.id; }
+  render();
+  return true;
+}
+
+function tick() {
+  if (!applyNext()) { pause(); return; }
+  const nxt = EVENTS[idx + 1];
+  if (!nxt) { pause(); return; }
+  timer = setTimeout(tick, Math.max(20, (nxt.t - EVENTS[idx].t) / speed));
+}
+function play() { if (timer) return; document.getElementById("play").textContent = "Pause"; tick(); }
+function pause() { clearTimeout(timer); timer = null; document.getElementById("play").textContent = "Play"; }
+
+function cls(s, role) {
+  if (s === "waiting") return "wait";
+  if (s === "reading") return "active-r";
+  if (s === "writing") return "active-w";
+  if (s.startsWith("finished") || s === "released resource") return "leaving";
+  return "idle";
+}
+
+function render() {
+  const cur = idx >= 0 ? EVENTS[idx] : null;
+  document.getElementById("clock").textContent = (cur ? cur.t : 0) + " ms";
+  document.getElementById("count").textContent = idx + 1;
+
+  let h = "";
+  for (let i = 1; i <= CFG.readers; i++) { const s = st["reader" + i];
+    h += `<div class="proc ${cls(s.state)}"><b>R${i}</b>${s.state}<small>${s.note}</small></div>`; }
+  document.getElementById("readers").innerHTML = h;
+  h = "";
+  for (let i = 1; i <= CFG.writers; i++) { const s = st["writer" + i];
+    h += `<div class="proc ${cls(s.state)}"><b>W${i}</b>${s.state}<small>${s.note}</small></div>`; }
+  document.getElementById("writers").innerHTML = h;
+
+  // Resource status = who actually holds the `resource` semaphore, exactly as
+  // the program recorded it at this event (cur.resource). This is separate from
+  // which processes are reading/writing: a reader can be finished while the
+  // group still holds the lock, and a writer that is finished still holds it
+  // until its "released resource" event.
+  const readersIn = [], waiting = [];
+  let writerIn = null;
+  for (const k in st) {
+    const s = st[k].state, lbl = (k.startsWith("reader") ? "R" : "W") + k.replace(/\D/g, "");
+    if (s === "reading") readersIn.push(lbl);
+    if (s === "writing" || s === "finished writing") writerIn = lbl;
+    if (s === "waiting") waiting.push(lbl);
+  }
+  const nReaders = cur ? cur.readers_inside : 0;
+  const owner = cur ? cur.resource : "free";
+  let status;
+  if (owner === "writer") {
+    status = cur.writer_inside
+      ? `<span class="busy-w">LOCKED FOR WRITING by ${writerIn}</span>`
+      : `<span class="busy-w">LOCKED by ${writerIn} - write finished, not released yet</span>`;
+  } else if (owner === "readers") {
+    status = nReaders > 0
+      ? `<span class="busy-r">LOCKED BY READER GROUP - ${readersIn.join(", ")} reading (${nReaders} at once)</span>`
+      : `<span class="busy-r">LOCKED BY READER GROUP - last reader finished, not released yet</span>`;
+  } else status = `<span class="free">FREE</span>`;
+  document.getElementById("resource").innerHTML =
+    `status: ${status}<br>value: <span class="big">${value}</span><br>last written by: ${writtenBy}` +
+    `<br>readers currently reading: ${nReaders}`;
+  document.getElementById("waiting").textContent = waiting.length ? waiting.join(", ") : "nobody";
+
+  const rows = document.querySelectorAll("#log tr[data-i]");
+  rows.forEach(r => { const i = +r.dataset.i; r.className = i === idx ? "cur" : (i < idx ? "done" : ""); });
+  if (cur) { const r = rows[idx]; if (r) r.scrollIntoView({ block: "nearest" }); }
+  document.getElementById("cursor").style.left = `calc(34px + ${cur ? (cur.t / TMAX * 100) : 0}% * (100% - 34px) / 100%)`;
+}
+
+// ---- static parts built once: event table + gantt ----
+const TMAX = EVENTS.length ? EVENTS[EVENTS.length - 1].t : 1;
+document.getElementById("tmax").textContent = TMAX + " ms";
+(function buildLog() {
+  let h = "<table><tr><th>#</th><th>time</th><th>who</th><th>state</th><th>readers reading</th><th>writer writing</th><th>resource held by</th><th>note</th></tr>";
+  EVENTS.forEach((e, i) => {
+    h += `<tr data-i="${i}"><td>${i + 1}</td><td>${e.t} ms</td><td>${e.role === "reader" ? "R" : "W"}${e.id}</td><td>${e.state}</td><td>${e.readers_inside}</td><td>${e.writer_inside ? "yes" : "no"}</td><td>${e.resource}</td><td>${e.note || ""}</td></tr>`;
+  });
+  document.getElementById("log").innerHTML = h + "</table>";
+})();
+(function buildGantt() {
+  const segs = {}, open = {};
+  const names = ["resource"];
+  for (let i = 1; i <= CFG.readers; i++) names.push("reader" + i);
+  for (let i = 1; i <= CFG.writers; i++) names.push("writer" + i);
+  names.forEach(n => segs[n] = []);
+  let prevOwner = "free";
+  for (const e of EVENTS) {
+    // RES row: a segment for every stretch the semaphore is held, from the recorded holder
+    if (e.resource !== prevOwner) {
+      if (open.resource) { segs.resource.push({ ...open.resource, e: e.t }); delete open.resource; }
+      if (e.resource !== "free") open.resource = { s: e.t, c: e.resource === "readers" ? "r" : "x" };
+      prevOwner = e.resource;
+    }
+    const k = key(e);
+    if (e.state === "waiting") open[k] = { s: e.t, c: "w" };
+    else if (e.state === "reading" || e.state === "writing") {
+      if (open[k]) { segs[k].push({ ...open[k], e: e.t }); }
+      open[k] = { s: e.t, c: e.state === "reading" ? "r" : "x" };
+    } else if (e.state.startsWith("finished")) {
+      if (open[k]) { segs[k].push({ ...open[k], e: e.t }); delete open[k]; }
+    }
+  }
+  let h = "";
+  for (const n of names) {
+    const lbl = n === "resource" ? "RES" : (n.startsWith("reader") ? "R" : "W") + n.replace(/\D/g, "");
+    h += `<div class="grow"><span class="lbl">${lbl}</span><div class="gtrack">`;
+    for (const s of segs[n]) h += `<div class="seg ${s.c}" style="left:${s.s / TMAX * 100}%;width:${Math.max(0.3, (s.e - s.s) / TMAX * 100)}%" title="${s.s}-${s.e} ms"></div>`;
+    h += "</div></div>";
+  }
+  document.getElementById("gantt").innerHTML = h + '<div id="cursor"></div>';
+})();
+
+document.getElementById("play").onclick = () => timer ? pause() : play();
+document.getElementById("step").onclick = () => { pause(); applyNext(); };
+document.getElementById("reset").onclick = reset;
+document.getElementById("speed").onchange = e => speed = +e.target.value;
+reset();
+</script>
+</body>
+</html>
