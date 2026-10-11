@@ -41,7 +41,8 @@ or `.\run.ps1` (Windows) / `./run.sh` (Linux, macOS) to run all four one after a
 
 Each program prints the live event log, then a block of checks, then writes
 `simulation.html` next to itself and asks the default browser to open it. Q2-Q4 take
-`--no-browser` if you don't want that. The numbers at the top of each file
+`--no-browser` if you don't want that. All four join their threads with a 60 s limit, so a
+deadlock would be reported as a failed check instead of hanging the program. The numbers at the top of each file
 (`NUM_READERS`, `ROUNDS`, `MEALS`, delays ...) can be changed before a run.
 
 ## How the HTML is produced
@@ -91,15 +92,24 @@ read used fair semaphores; Python has no such switch). So:
 
 ## Results of the runs I kept
 
-Defaults: 5 readers, 2 writers, 3 rounds; 4 philosophers, 3 meals. Three runs each.
+Defaults: 5 readers, 2 writers, 3 rounds; 4 philosophers, 3 meals. The numbers below are read
+from the replay files committed in `generated_html/` (the same run as the screenshots), so they
+can be checked against those files. Other runs give different numbers because the interleaving
+changes - every program ran at least three more times with all checks passing.
 
-- Q1: final value 6 (= 2 writers x 3 rounds), max 5 readers reading at once, no overlap.
-- Q2: all 8 checks pass; 84 events; 10 reader requests were held back for a waiting writer.
-- Q3: all 7 checks pass; 112 events; max 3 in the room; everyone ate 3 times; 5-8 s.
-- Q4: all 6 checks pass; 52 events; everyone ate 3 times; two non-neighbours eating at the
-  same time was observed in every run.
+- Q1 (`readers_writers_semaphore.html`): 96 events, final value 6 (= 2 writers x 3 rounds),
+  max 5 readers reading at once, 12 "released resource" events, no overlap, all threads
+  finished (4.1 s, limit 60 s).
+- Q2 (`readers_writers_monitor.html`): 84 events, all 8 checks pass, max 5 readers at once.
+  Of the 15 reader requests, 5 arrived while a writer was active or waiting and were held back
+  (counted as reader "waiting" events whose snapshot has `writer_active` or `waiting_writers > 0`).
+- Q3 (`dining_philosophers_semaphore.html`): 112 events, all 7 checks pass, never more than 3 in
+  the room, everyone ate 3 times. In this particular run no two philosophers happened to eat at
+  the same moment (max eating = 1); other runs showed 2.
+- Q4 (`dining_philosophers_monitor.html`): 52 events, all 6 checks pass, everyone ate 3 times,
+  two non-neighbours eating at the same time was observed (max eating = 2).
 
-Screenshots of the four replays are in `screenshots/`.
+Screenshots of the four replays are in `screenshots/`, taken from these same files.
 
 ## Known limitations
 

@@ -33,7 +33,8 @@ Logging detail that mattered: "finished reading" (counter drops) and "released r
 the release is in the log. Every event stores who holds `resource` (free / readers / writer).
 
 Checks: no reader starts while a writer holds the resource, no writer starts while anyone
-holds it, final value = writers x rounds, resource free at the end.
+holds it, final value = writers x rounds, resource free at the end, all threads finished
+within the 60 s join limit.
 
 ## 4. Q2 - Readers-Writers, monitor
 
@@ -76,12 +77,12 @@ together, information line for max eating at once, monitor state clean at the en
 
 Three runs per program with the default settings:
 
-| Program | Events | Key result | Time |
-|---------|--------|------------|------|
-| Q1 semaphores | 94 | value 6/6, no overlap, 10 releases, max 5 readers | ~4 s |
-| Q2 monitor | 84 | all 8 checks pass, 10 reader requests held back | 4.0-4.6 s |
-| Q3 semaphores | 112 | all 7 checks pass, max 3 in room, all ate 3x | 5-8 s |
-| Q4 monitor | 52 | all 6 checks pass, all ate 3x, 2 eating at once seen | 4.4-4.8 s |
+| Program | Events | Key result (from the committed replay) | Time |
+|---------|--------|-----------------------------------------|------|
+| Q1 semaphores | 96 | value 6/6, no overlap, 12 releases, max 5 readers at once | 4.1 s |
+| Q2 monitor | 84 | all 8 checks pass, 5 of 15 reader requests held back for a writer | 4.0 s |
+| Q3 semaphores | 112 | all 7 checks pass, max 3 in room, all ate 3x (max eating 1 in this run) | 5-8 s |
+| Q4 monitor | 52 | all 6 checks pass, all ate 3x, 2 eating at once observed | 4.4-4.8 s |
 
 The generated pages were also checked in a headless browser: the state recomputed from
 the event order matches the recorded snapshots at every event, and the cards, resource /

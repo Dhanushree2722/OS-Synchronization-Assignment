@@ -37,6 +37,7 @@ ROUNDS = 3                  # how many times each thread tries to enter
 READ_TIME = (0.15, 0.40)    # seconds a reader stays inside (random in this range)
 WRITE_TIME = (0.25, 0.50)   # seconds a writer stays inside
 THINK_TIME = (0.05, 0.60)   # pause between two attempts of the same thread
+JOIN_TIMEOUT = 60.0         # if the threads aren't done by then, something is stuck (deadlock) - report it instead of hanging
 HTML_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "simulation.html")
 
 # ------------------------------------------------------------------
@@ -209,10 +210,13 @@ def writer(wid):
         record("writer", wid, "idle")
 
 
-def check_results():
+def check_results(threads, elapsed):
     """Print a short verdict. Returns a dict that also goes into the HTML."""
     expected = NUM_WRITERS * ROUNDS
     actual = shared_data["value"]
+    stuck = [t.name for t in threads if t.is_alive()]
+    if stuck:
+        violations.append(f"threads still blocked after {JOIN_TIMEOUT:.0f} s (deadlock?): {', '.join(stuck)}")
     if actual != expected:
         violations.append(f"final value is {actual}, expected {expected} (lost update)")
     if holder["who"] != "free":
@@ -221,6 +225,7 @@ def check_results():
     print()
     print("---- checks ----")
     print(f"readers inside at the same time (max) : {inside['max_readers']}")
+    print(f"all threads finished                  : {'YES' if not stuck else 'NO'} ({elapsed:.2f} s, limit {JOIN_TIMEOUT:.0f} s)")
     print(f"final value                           : {actual} (expected {expected})")
     print(f"last written by                       : {shared_data['written_by']}")
     print(f"reading/writing overlap seen          : {'NO' if not violations else 'YES'}")
@@ -494,10 +499,13 @@ def main():
     print(f"starting {NUM_READERS} readers and {NUM_WRITERS} writers, {ROUNDS} rounds each\n")
     for t in threads:
         t.start()
+    t0 = time.perf_counter()
+    deadline = t0 + JOIN_TIMEOUT
     for t in threads:
-        t.join()                        # wait until every thread is done
+        t.join(max(0.0, deadline - time.perf_counter()))   # wait, but not forever - a deadlock would leave threads alive
+    elapsed = time.perf_counter() - t0
 
-    summary = check_results()
+    summary = check_results(threads, elapsed)
     write_html(summary)
 
 
